@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>scene — the agent working</title>
+<style>
+  html, body { margin:0; padding:0; background:#04050d; height:100%; overflow:hidden;
+    font-family:"JetBrains Mono", "DejaVu Sans Mono", monospace; }
+  #win { position:fixed; inset:36px 44px; border-radius:16px; background:#070912;
+    border:1px solid rgba(103,232,249,.22); box-shadow:0 24px 70px rgba(0,0,0,.65);
+    display:flex; flex-direction:column; overflow:hidden; }
+  #bar { display:flex; align-items:center; gap:9px; padding:15px 20px;
+    border-bottom:1px solid rgba(148,163,184,.13); background:#0a0d1c; }
+  .dot { width:13px; height:13px; border-radius:50%; }
+  #tab { margin-left:18px; background:#12172e; color:#a5f3fc; font-size:21px;
+    padding:7px 18px; border-radius:8px 8px 0 0; }
+  #agent { margin-left:auto; color:#f472b6; font-size:21px; letter-spacing:.08em; }
+  #codewrap { position:relative; flex:1; overflow:hidden; }
+  #code { position:absolute; left:0; right:0; top:0; padding:14px 0; will-change:transform; }
+  .ln { display:flex; font-size:24.5px; line-height:1.5; white-space:pre; }
+  .no { width:74px; flex:none; text-align:right; padding-right:22px; color:#3f4a6b; user-select:none; }
+  .tx { color:#dbe7ff; }
+  .kw { color:#c792ea; } .st { color:#9ece6a; } .cm { color:#546179; font-style:italic; }
+  .nm { color:#ff9e64; } .fn { color:#7aa2f7; }
+  #cur { background:rgba(103,232,249,.09); }
+  #caret { display:inline-block; width:12px; height:24px; background:#67e8f9;
+    vertical-align:-3px; box-shadow:0 0 12px rgba(103,232,249,.9); }
+  #chip { position:absolute; left:34px; bottom:26px; background:rgba(10,13,28,.92);
+    border:1px solid rgba(244,114,182,.45); color:#fbcfe8; font-size:37px; font-weight:700;
+    padding:14px 26px; border-radius:12px; letter-spacing:.02em;
+    box-shadow:0 10px 34px rgba(0,0,0,.5); }
+  #status { display:flex; align-items:center; gap:20px; padding:13px 22px;
+    border-top:1px solid rgba(148,163,184,.13); background:#0a0d1c;
+    color:#7d8db0; font-size:20px; }
+  #track { flex:1; height:9px; border-radius:99px; background:#1a2138; overflow:hidden; }
+  #fill { height:100%; width:0%; border-radius:99px;
+    background:linear-gradient(90deg,#22d3ee,#e879f9); box-shadow:0 0 14px rgba(232,121,249,.7); }
+</style>
+</head>
+<body>
+<div id="win">
+  <div id="bar">
+    <div class="dot" style="background:#f87171"></div>
+    <div class="dot" style="background:#fbbf24"></div>
+    <div class="dot" style="background:#34d399"></div>
+    <div id="tab">neon-serpent.html</div>
+    <div id="agent">AGENT ● WORKING</div>
+  </div>
+  <div id="codewrap">
+    <div id="code"></div>
+    <div id="chip">writing game loop…</div>
+  </div>
+  <div id="status">
+    <div id="lines">0 lines</div>
+    <div id="track"><div id="fill"></div></div>
+    <div id="pct">0%</div>
+  </div>
+</div>
+<script>
+'use strict';
+const codeEl = document.getElementById('code');
+const chipEl = document.getElementById('chip');
+const linesEl = document.getElementById('lines');
+const fillEl = document.getElementById('fill');
+const pctEl = document.getElementById('pct');
+const LINE_H = 24.5 * 1.5;
+let lines = [], vnow = 0;
+const DUR = 16;
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function paint(line){
+  let s = esc(line);
+  if (/^\s*\/\//.test(line) || /^\s*\*/.test(line) || /^\s*\/\*/.test(line))
+    return '<span class="cm">' + s + '</span>';
+  s = s.replace(/('(?:[^'\\]|\\.)*')/g, '<span class="st">$1</span>');
+  s = s.replace(/\b(const|let|var|function|return|if|else|for|while|new|typeof|break|continue)\b/g,
+                '<span class="kw">$1</span>');
+  s = s.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="nm">$1</span>');
+  return s;
+}
+window.__setCode = text => {
+  lines = text.replace(/\n$/, '').split('\n');
+  codeEl.innerHTML = lines.map((l, i) =>
+    '<div class="ln" data-i="' + i + '"><div class="no">' + (i + 1) + '</div>' +
+    '<div class="tx">' + (paint(l) || ' ') + '</div></div>').join('');
+};
+const CAPTIONS = [
+  [0.0, 'writing game loop…'], [4.0, 'adding particles…'],
+  [8.0, 'combos + high score…'], [12.0, 'tuning speed…'], [15.0, '✓ done — running it']
+];
+function render(){
+  const p = Math.min(vnow / DUR, 1);
+  const eased = p * p * (3 - 2 * p);
+  const shown = Math.max(1, Math.floor(eased * lines.length));
+  for (let i = 0; i < lines.length; i++) {
+    const el = codeEl.children[i]; if (!el) break;
+    el.style.display = i < shown ? 'flex' : 'none';
+    el.id = i === shown - 1 ? 'cur' : '';
+  }
+  const viewH = document.getElementById('codewrap').clientHeight;
+  const y = Math.max(0, shown * LINE_H - viewH * 0.62);
+  codeEl.style.transform = 'translateY(' + (-y) + 'px)';
+  let cap = CAPTIONS[0][1];
+  for (const [t, c] of CAPTIONS) if (vnow >= t) cap = c;
+  chipEl.textContent = cap;
+  linesEl.textContent = shown + ' lines';
+  fillEl.style.width = (p * 100).toFixed(1) + '%';
+  pctEl.textContent = Math.round(p * 100) + '%';
+}
+window.__advance = dt => { vnow += dt; render(); };
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEON SERPENT — one prompt, one file</title>
+<style>
+  html, body { margin:0; padding:0; background:#04050d; height:100%; overflow:hidden; }
+  body { display:flex; align-items:center; justify-content:center; }
+  canvas { width:1920px; height:1080px; display:block; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+/* NEON SERPENT — a neon snake with particles, combos and a high score.
+   One file, no libraries. Built from a single prompt. */
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const W = 1920, H = 1080;
+
+/* ---------- deterministic rng (seeded, so a capture run is repeatable) ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const params = new URLSearchParams(location.search);
+const rand = mulberry32(parseInt(params.get('seed') || '1337', 10));
+const CAPTURE = params.get('capture') === '1';
+
+/* ---------- playfield ---------- */
+const CELL = 48, COLS = 32, ROWS = 17;
+const OX = (W - COLS * CELL) / 2, OY = 176;
+const FIELD_W = COLS * CELL, FIELD_H = ROWS * CELL;
+
+/* ---------- state ---------- */
+let snake, dir, pendingDir, food, particles, popups;
+let score, best, combo, comboTimer, foods, stepEvery, stepAcc, alive, deathFlash;
+best = 0;
+try { best = parseInt(localStorage.getItem('neon-serpent-best') || '0', 10) || 0; } catch (e) { /* file:// may deny storage */ }
+
+function reset() {
+  const cy = ROWS >> 1, cx = COLS >> 2;
+  snake = [{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy},{x:cx-3,y:cy},{x:cx-4,y:cy}];
+  dir = {x:1,y:0}; pendingDir = dir;
+  particles = []; popups = [];
+  score = 0; combo = 0; comboTimer = 0; foods = 0;
+  stepEvery = 0.132; stepAcc = 0; alive = true; deathFlash = 0;
+  placeFood();
+}
+function placeFood() {
+  for (;;) {
+    const f = { x: Math.floor(rand() * COLS), y: Math.floor(rand() * ROWS),
+                hue: 320 + Math.floor(rand() * 30) };
+    if (!snake.some(s => s.x === f.x && s.y === f.y)) { food = f; return; }
+  }
+}
+function burst(cx, cy, hue) {
+  for (let i = 0; i < 24; i++) {
+    const a = rand() * Math.PI * 2, sp = 90 + rand() * 340;
+    particles.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                     life: 0.55 + rand() * 0.5, max: 1, hue: hue, r: 2 + rand() * 4 });
+  }
+  for (const p of particles) p.max = p.life;
+}
+
+/* ---------- the autopilot: plays the demo so the game shows itself ---------- */
+function floodCount(start, body) {
+  const seen = new Set([start.x + ',' + start.y]);
+  const q = [start]; let n = 0;
+  while (q.length) {
+    const c = q.pop(); n++;
+    for (const d of [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}]) {
+      const nx = c.x + d.x, ny = c.y + d.y, k = nx + ',' + ny;
+      if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS || seen.has(k)) continue;
+      if (body.some(s => s.x === nx && s.y === ny)) continue;
+      seen.add(k); q.push({x:nx, y:ny});
+    }
+  }
+  return n;
+}
+function autopilot() {
+  const head = snake[0];
+  const dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+  let bestDir = null, bestScore = -Infinity;
+  for (const d of dirs) {
+    if (d.x === -dir.x && d.y === -dir.y) continue;
+    const nx = head.x + d.x, ny = head.y + d.y;
+    if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+    const willEat = nx === food.x && ny === food.y;
+    const body = willEat ? snake : snake.slice(0, -1);
+    if (body.some(s => s.x === nx && s.y === ny)) continue;
+    const space = floodCount({x:nx, y:ny}, body);
+    if (space < snake.length + 4) continue;
+    const dist = Math.abs(food.x - nx) + Math.abs(food.y - ny);
+    let s = -dist * 10 + Math.min(space, 220) * 0.35;
+    if (d.x === dir.x && d.y === dir.y) s += 3;
+    if (willEat) s += 40;
+    if (s > bestScore) { bestScore = s; bestDir = d; }
+  }
+  if (bestDir) pendingDir = bestDir;
+}
+
+/* ---------- simulation step ---------- */
+function step() {
+  autopilot();
+  dir = pendingDir;
+  const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+  if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS ||
+      snake.some(s => s.x === head.x && s.y === head.y)) {
+    alive = false; deathFlash = 0.7;
+    burst(OX + (snake[0].x + 0.5) * CELL, OY + (snake[0].y + 0.5) * CELL, 0);
+    if (score > best) { best = score; try { localStorage.setItem('neon-serpent-best', String(best)); } catch (e) {} }
+    return;
+  }
+  snake.unshift(head);
+  if (head.x === food.x && head.y === food.y) {
+    foods++;
+    combo = comboTimer > 0 ? Math.min(combo + 1, 8) : 1;
+    comboTimer = 3.0;
+    const gain = 10 * combo;
+    score += gain;
+    const cx = OX + (head.x + 0.5) * CELL, cy = OY + (head.y + 0.5) * CELL;
+    burst(cx, cy, food.hue);
+    popups.push({ x: cx, y: cy - 10, life: 0.9, text: '+' + gain + (combo > 1 ? '  x' + combo : '') });
+    stepEvery = Math.max(0.072, 0.132 - foods * 0.0022);
+    placeFood();
+  } else {
+    snake.pop();
+  }
+}
+
+/* ---------- rendering ---------- */
+function drawCell(x, y, r, colour, glow) {
+  const px = OX + x * CELL, py = OY + y * CELL;
+  ctx.save();
+  ctx.shadowColor = colour; ctx.shadowBlur = glow;
+  ctx.fillStyle = colour;
+  ctx.beginPath(); ctx.roundRect(px + 3, py + 3, CELL - 6, CELL - 6, r); ctx.fill();
+  ctx.restore();
+}
+function render(now) {
+  ctx.fillStyle = '#04050d'; ctx.fillRect(0, 0, W, H);
+  /* backdrop grid glow */
+  const g = ctx.createRadialGradient(W/2, H/2, 120, W/2, H/2, 980);
+  g.addColorStop(0, 'rgba(38,44,110,0.35)'); g.addColorStop(1, 'rgba(4,5,13,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  /* HUD */
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 54px "Segoe UI", system-ui, sans-serif';
+  ctx.fillStyle = '#67e8f9'; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 22;
+  ctx.textAlign = 'left'; ctx.fillText('NEON SERPENT', OX, 84);
+  ctx.shadowBlur = 0;
+  ctx.font = '600 40px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('BEST ' + Math.max(best, score), W - OX, 84);
+  ctx.fillStyle = combo > 1 ? '#fbbf24' : '#64748b';
+  ctx.fillText('COMBO x' + Math.max(combo, 1), W - OX - 300, 84);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText('SCORE ' + score, W - OX - 640, 84);
+  ctx.textAlign = 'left';
+
+  /* field frame + grid */
+  ctx.strokeStyle = 'rgba(103,232,249,0.5)'; ctx.lineWidth = 2;
+  ctx.strokeRect(OX - 2, OY - 2, FIELD_W + 4, FIELD_H + 4);
+  ctx.strokeStyle = 'rgba(96,120,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 1; i < COLS; i++) { ctx.moveTo(OX + i * CELL, OY); ctx.lineTo(OX + i * CELL, OY + FIELD_H); }
+  for (let j = 1; j < ROWS; j++) { ctx.moveTo(OX, OY + j * CELL); ctx.lineTo(OX + FIELD_W, OY + j * CELL); }
+  ctx.stroke();
+
+  /* food: a pulsing neon orb */
+  const fx = OX + (food.x + 0.5) * CELL, fy = OY + (food.y + 0.5) * CELL;
+  const pulse = 13 + Math.sin(now * 6) * 3;
+  ctx.save();
+  ctx.shadowColor = 'hsl(' + food.hue + ',100%,62%)'; ctx.shadowBlur = 34;
+  ctx.fillStyle = 'hsl(' + food.hue + ',100%,64%)';
+  ctx.beginPath(); ctx.arc(fx, fy, pulse, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.beginPath(); ctx.arc(fx - 4, fy - 4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  /* snake: interpolated between the last two grid states for smooth motion */
+  const t = Math.min(stepAcc / stepEvery, 1);
+  for (let i = snake.length - 1; i >= 0; i--) {
+    const cur = snake[i];
+    const prev = snake[Math.min(i + 1, snake.length - 1)];
+    const x = prev.x + (cur.x - prev.x) * t, y = prev.y + (cur.y - prev.y) * t;
+    const f = i / Math.max(snake.length - 1, 1);
+    const colour = i === 0 ? '#a7f3d0' : 'hsl(' + (187 + f * 130) + ',95%,' + (60 - f * 14) + '%)';
+    drawCell(x, y, i === 0 ? 14 : 11, colour, i === 0 ? 26 : 16);
+  }
+  /* eyes */
+  if (snake.length) {
+    const h = snake[0], px = OX + (h.x + 0.5) * CELL, py = OY + (h.y + 0.5) * CELL;
+    ctx.fillStyle = '#052e16';
+    const ex = dir.x * 6, ey = dir.y * 6, ox = dir.y * 9, oy = dir.x * 9;
+    ctx.beginPath(); ctx.arc(px + ex + ox, py + ey + oy, 4.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + ex - ox, py + ey - oy, 4.4, 0, Math.PI * 2); ctx.fill();
+  }
+
+  /* particles */
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(p.life / p.max, 0);
+    ctx.fillStyle = 'hsl(' + p.hue + ',100%,65%)';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (p.life / p.max), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore(); ctx.globalAlpha = 1;
+
+  /* floating score popups */
+  ctx.font = '700 34px "Segoe UI", system-ui, sans-serif'; ctx.textAlign = 'center';
+  for (const p of popups) {
+    ctx.globalAlpha = Math.min(p.life / 0.9, 1);
+    ctx.fillStyle = '#fde68a'; ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 14;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.textAlign = 'left';
+
+  /* vignette + faint scanlines for a CRT-neon finish */
+  const v = ctx.createRadialGradient(W/2, H/2, 420, W/2, H/2, 1180);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.016)';
+  for (let y = (Math.floor(now * 24) % 4); y < H; y += 4) ctx.fillRect(0, y, W, 1);
+
+  if (deathFlash > 0) {
+    ctx.fillStyle = 'rgba(255,45,90,' + (deathFlash * 0.35) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (!alive) {
+    ctx.font = '700 64px "Segoe UI", system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#f8fafc'; ctx.shadowColor = '#ff2d78'; ctx.shadowBlur = 26;
+    ctx.fillText('SIGNAL LOST — REBUILDING…', W / 2, H / 2);
+    ctx.shadowBlur = 0; ctx.textAlign = 'left';
+  }
+}
+
+/* ---------- virtual clock: one entry point for live play and capture ---------- */
+let vnow = 0, deathTimer = 0;
+function advance(dt) {
+  vnow += dt;
+  if (!alive) {
+    deathTimer += dt; deathFlash = Math.max(0, deathFlash - dt);
+    if (deathTimer > 1.1) { const keepBest = best; reset(); best = Math.max(best, keepBest); deathTimer = 0; }
+  } else {
+    stepAcc += dt;
+    while (stepAcc >= stepEvery) { stepAcc -= stepEvery; step(); if (!alive) break; }
+  }
+  if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; p.life -= dt; }
+  particles = particles.filter(p => p.life > 0);
+  for (const p of popups) { p.y -= 44 * dt; p.life -= dt; }
+  popups = popups.filter(p => p.life > 0);
+  render(vnow);
+}
+window.__advance = advance;
+window.__state = () => ({ score, combo, foods, alive, length: snake ? snake.length : 0 });
+
+reset();
+render(0);
+if (!CAPTURE) {
+  let last = performance.now();
+  (function loop(t) {
+    advance(Math.min((t - last) / 1000, 0.05));
+    last = t; requestAnimationFrame(loop);
+  })(last);
+  addEventListener('keydown', e => {
+    const k = { ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1}, ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
+                w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0} }[e.key];
+    if (k && (k.x !== -dir.x || k.y !== -dir.y)) pendingDir = k;
+  });
+}
+</script>
+</body>
+</html>

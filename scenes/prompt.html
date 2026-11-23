@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>scene — the prompt</title>
+<style>
+  html, body { margin:0; padding:0; background:#04050d; height:100%; overflow:hidden;
+    font-family:"Segoe UI", system-ui, sans-serif; }
+  body { display:flex; align-items:center; justify-content:center; }
+  #glow { position:fixed; inset:0;
+    background:radial-gradient(ellipse 900px 480px at 50% 44%, rgba(46,54,140,.38), rgba(4,5,13,0) 70%); }
+  #card { position:relative; width:1240px; border-radius:22px; background:#0b0e1d;
+    border:1px solid rgba(103,232,249,.28);
+    box-shadow:0 0 90px rgba(34,211,238,.14), 0 30px 80px rgba(0,0,0,.6); }
+  #bar { display:flex; align-items:center; gap:9px; padding:20px 26px;
+    border-bottom:1px solid rgba(148,163,184,.14); }
+  .dot { width:15px; height:15px; border-radius:50%; }
+  #title { margin-left:16px; color:#94a3b8; font-size:24px; letter-spacing:.14em; }
+  #who { padding:26px 34px 0; color:#22d3ee; font-size:25px; font-weight:600; letter-spacing:.06em; }
+  #bubble { margin:12px 34px 8px; padding:8px 2px 0; color:#f1f5f9;
+    font-size:47px; line-height:1.42; font-weight:600; min-height:202px; }
+  #cursor { display:inline-block; width:24px; height:46px; margin-left:4px;
+    background:#67e8f9; vertical-align:-6px; box-shadow:0 0 16px rgba(103,232,249,.9); }
+  #foot { display:flex; justify-content:flex-end; padding:10px 30px 28px; }
+  #send { color:#04050d; background:#334155; font-size:26px; font-weight:700;
+    padding:13px 34px; border-radius:999px; letter-spacing:.04em; transition:none; }
+</style>
+</head>
+<body>
+<div id="glow"></div>
+<div id="card">
+  <div id="bar">
+    <div class="dot" style="background:#f87171"></div>
+    <div class="dot" style="background:#fbbf24"></div>
+    <div class="dot" style="background:#34d399"></div>
+    <div id="title">MAKE.FUN — NEW BUILD</div>
+  </div>
+  <div id="who">you → coding agent</div>
+  <div id="bubble"><span id="typed"></span><span id="cursor"></span></div>
+  <div id="foot"><div id="send">Build it →</div></div>
+</div>
+<script>
+'use strict';
+const TEXT = 'make me a neon snake game with particles, combos and a high score — one file, no libraries';
+const typed = document.getElementById('typed');
+const cursor = document.getElementById('cursor');
+const send = document.getElementById('send');
+let vnow = 0;
+function render() {
+  const start = 0.35, cps = 26;
+  const n = Math.max(0, Math.min(TEXT.length, Math.floor((vnow - start) * cps)));
+  typed.textContent = TEXT.slice(0, n);
+  cursor.style.opacity = (Math.floor(vnow * 2.2) % 2 === 0) ? '1' : '0';
+  if (n >= TEXT.length) {
+    send.style.background = '#22d3ee';
+    send.style.boxShadow = '0 0 26px rgba(34,211,238,.75)';
+  }
+}
+window.__advance = dt => { vnow += dt; render(); };
+render();
+</script>
+</body>
+</html>
